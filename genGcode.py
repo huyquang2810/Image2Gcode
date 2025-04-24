@@ -75,7 +75,7 @@ class Picture:
 # --- Tiện ích resize ảnh trước khi gắn vào Excel ---
 def resize_and_save_temp(image_path, output_path, max_size=(100, 100)):
     try:
-        img = PILImage.open(image_path)
+        img = PILImage.open(image_path).convert("RGB")  # ← Thêm convert tại đây
         img.thumbnail(max_size)
         img.save(output_path)
         return True
@@ -117,51 +117,65 @@ def resize_to_a4(image, target_width=210, target_height=297):
     canvas[top:top + new_h, left:left + new_w] = resized
     return canvas
 
-def extract_faces_to_A4(input_folder, output_folder, face_analyzer):
-    os.makedirs(output_folder, exist_ok=True)
-    filenames = sorted(
-        [f for f in os.listdir(input_folder) if f.lower().endswith(('.jpg', '.jpeg', '.png'))],
-        key=lambda x: int(re.search(r'\d+', x).group()) if re.search(r'\d+', x) else float('inf')
-    )
-
-    for file in filenames:
-        path = os.path.join(input_folder, file)
-        image = cv2.imread(path)
-        if image is None: continue
-
-        image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        pil_img = Image.fromarray(image_rgb)
-        removed = rembg.remove(pil_img)
-        rgba = removed.convert("RGBA")
-        np_img = np.array(rgba)
-        white_bg = np.ones_like(np_img[:, :, :3], dtype=np.uint8) * 255
-        alpha = np_img[:, :, 3:4] / 255.0
-        blend = (np_img[:, :, :3] * alpha + white_bg * (1 - alpha)).astype(np.uint8)
-
-        faces = face_analyzer.get(blend)
-        faces = face_analyzer.get(blend)
-        if not faces:
-            print("❌ Không phát hiện được khuôn mặt trong ảnh:", os.path.basename(path))
-            continue
-
-        face = faces[0]
-        aligned = align_face(blend, face)
-        x1, y1, x2, y2 = face.bbox.astype(int)
-        h, w = aligned.shape[:2]
-        top = np.clip(y1 - int(0.45 * (y2 - y1)), 0, h)
-        bottom = np.clip(y2 + int(0.05 * (y2 - y1)), 0, h)
-        left = np.clip(x1 - int(0.3 * (x2 - x1)), 0, w)
-        right = np.clip(x2 + int(0.3 * (x2 - x1)), 0, w)
-        crop = aligned[top:bottom, left:right]
-        crop_rgb = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
-        a4 = resize_to_a4(crop_rgb)
-        save_path = os.path.join(output_folder, os.path.splitext(file)[0] + "_a4.jpg")
-        cv2.imwrite(save_path, a4)
-        print(f"✅ Saved A4 image: {os.path.basename(save_path)}")
+# def extract_faces_to_A4(input_folder, output_folder, face_analyzer):
+#     os.makedirs(output_folder, exist_ok=True)
+#     start_times = {}      # Map tên ảnh đã align → thời điểm bắt đầu xử lý
+#     file_map = {}         # Map ảnh đã align → ảnh gốc
+#
+#     filenames = sorted(
+#         [f for f in os.listdir(input_folder) if f.lower().endswith(('.jpg', '.jpeg', '.png'))],
+#         key=lambda x: int(re.search(r'\d+', x).group()) if re.search(r'\d+', x) else float('inf')
+#     )
+#
+#     for file in filenames:
+#         start_time = datetime.now()
+#
+#         path = os.path.join(input_folder, file)
+#         image = cv2.imread(path)
+#         if image is None:
+#             continue
+#
+#         image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+#         pil_img = Image.fromarray(image_rgb)
+#         removed = rembg.remove(pil_img)
+#
+#         rgba = removed.convert("RGBA")
+#         np_img = np.array(rgba)
+#         white_bg = np.ones_like(np_img[:, :, :3], dtype=np.uint8) * 255
+#         alpha = np_img[:, :, 3:4] / 255.0
+#         blend = (np_img[:, :, :3] * alpha + white_bg * (1 - alpha)).astype(np.uint8)
+#
+#         faces = face_analyzer.get(blend)
+#         if not faces:
+#             print("❌ Không phát hiện được khuôn mặt trong ảnh:", os.path.basename(path))
+#             continue
+#
+#         face = faces[0]
+#         aligned = align_face(blend, face)
+#         x1, y1, x2, y2 = face.bbox.astype(int)
+#         h, w = aligned.shape[:2]
+#         top = np.clip(y1 - int(0.45 * (y2 - y1)), 0, h)
+#         bottom = np.clip(y2 + int(0.05 * (y2 - y1)), 0, h)
+#         left = np.clip(x1 - int(0.3 * (x2 - x1)), 0, w)
+#         right = np.clip(x2 + int(0.3 * (x2 - x1)), 0, w)
+#         crop = aligned[top:bottom, left:right]
+#         crop_rgb = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
+#         a4 = resize_to_a4(crop_rgb)
+#
+#         save_name = os.path.splitext(file)[0] + "_a4.jpg"
+#         save_path = os.path.join(output_folder, save_name)
+#         cv2.imwrite(save_path, a4)
+#
+#         start_times[save_name] = start_time
+#         file_map[save_name] = file
+#         print(f"✅ Saved A4 image: {save_name}")
+#
+#     return start_times, file_map
 
 # === Main pipeline ===
 if __name__ == '__main__':
     face_model = init_face_analyzer()
+
     print("Chọn chế độ:\n1: Folder\n2: Webcam")
     mode = input("Nhập chế độ: ")
 
@@ -196,18 +210,15 @@ if __name__ == '__main__':
         print("Chế độ không hợp lệ.")
         exit()
 
-    aligned_face_dir = "img"
-    extract_faces_to_A4(input_face_dir, aligned_face_dir, face_model)
-
     output_folder = 'out'
     excel_folder = 'excel'
     thumb_folder = os.path.join(excel_folder, 'thumbs')
+    img_output = "img"
+
     os.makedirs(output_folder, exist_ok=True)
     os.makedirs(thumb_folder, exist_ok=True)
     os.makedirs(excel_folder, exist_ok=True)
-
-    files = sorted([f for f in os.listdir(aligned_face_dir) if f.lower().endswith(('.jpg', '.jpeg'))],
-                   key=lambda x: int(re.search(r'\d+', x).group()) if re.search(r'\d+', x) else float('inf'))
+    os.makedirs(img_output, exist_ok=True)
 
     wb = Workbook()
     ws = wb.active
@@ -219,15 +230,57 @@ if __name__ == '__main__':
     ws.column_dimensions['D'].width = 14
     ws.column_dimensions['E'].width = 14
 
-    for idx, filename in enumerate(files):
-        input_path = os.path.join(aligned_face_dir, filename)
-        base_name = os.path.splitext(filename)[0]
-        output_name = os.path.join(output_folder, base_name)  # ← Không thêm số thứ tự nữa
+    filenames = sorted(
+        [f for f in os.listdir(input_face_dir) if f.lower().endswith(('.jpg', '.jpeg', '.png'))],
+        key=lambda x: int(re.search(r'\d+', x).group()) if re.search(r'\d+', x) else float('inf')
+    )
 
-        print(f"\n🔧 Processing {filename}...")
+    for file in filenames:
+        print(f"\n📂 Đang xử lý ảnh: {file}")
         start_time = datetime.now()
+        input_path = os.path.join(input_face_dir, file)
+        image = cv2.imread(input_path)
+        if image is None:
+            print(f"⚠️ Không đọc được ảnh: {file}")
+            continue
 
-        pic = Picture(input_path)
+        # Tách nền
+        image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        pil_img = Image.fromarray(image_rgb)
+        removed = rembg.remove(pil_img)
+        rgba = removed.convert("RGBA")
+        np_img = np.array(rgba)
+        white_bg = np.ones_like(np_img[:, :, :3], dtype=np.uint8) * 255
+        alpha = np_img[:, :, 3:4] / 255.0
+        blend = (np_img[:, :, :3] * alpha + white_bg * (1 - alpha)).astype(np.uint8)
+
+        # Phát hiện mặt
+        faces = face_model.get(blend)
+        if not faces:
+            print(f"❌ Không phát hiện khuôn mặt trong ảnh: {file}")
+            continue
+
+        face = faces[0]
+        aligned = align_face(blend, face)
+        x1, y1, x2, y2 = face.bbox.astype(int)
+        h, w = aligned.shape[:2]
+        top = np.clip(y1 - int(0.45 * (y2 - y1)), 0, h)
+        bottom = np.clip(y2 + int(0.05 * (y2 - y1)), 0, h)
+        left = np.clip(x1 - int(0.3 * (x2 - x1)), 0, w)
+        right = np.clip(x2 + int(0.3 * (x2 - x1)), 0, w)
+        crop = aligned[top:bottom, left:right]
+        crop_rgb = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
+
+        # Resize A4
+        a4 = resize_to_a4(crop_rgb)
+        a4_name = os.path.splitext(file)[0] + "_a4.jpg"
+        a4_path = os.path.join(img_output, a4_name)
+        cv2.imwrite(a4_path, a4)
+        print(f"✅ Aligned and cropped face saved as A4: {a4_name}")
+
+        # Xử lý nhị phân & G-code
+        output_name = os.path.join(output_folder, os.path.splitext(file)[0])
+        pic = Picture(a4_path)
         pic.gray_scale()
         pic.save_gray(output_name)
         pic.save_binary(output_name)
@@ -235,14 +288,13 @@ if __name__ == '__main__':
         pic.save_gcode(output_name)
 
         duration = (datetime.now() - start_time).total_seconds()
-        ws.append([filename, "", round(duration, 3), "", num_points])
+        ws.append([file, "", round(duration, 3), "", num_points])
         current_row = ws.max_row
-
-        # Đặt chiều cao hàng tương ứng với thumbnail
         ws.row_dimensions[current_row].height = 85
 
-        thumb1 = os.path.join(thumb_folder, f'{base_name}_thumb1.jpg')
-        thumb2 = os.path.join(thumb_folder, f'{base_name}_thumb2.jpg')
+        thumb1 = os.path.join(thumb_folder, f'{os.path.splitext(file)[0]}_thumb1.jpg')
+        thumb2 = os.path.join(thumb_folder, f'{os.path.splitext(file)[0]}_thumb2.jpg')
+
         if resize_and_save_temp(input_path, thumb1):
             ws.add_image(XLImage(thumb1), f'B{current_row}')
         if resize_and_save_temp(f'{output_name}_binary.jpg', thumb2):
@@ -253,4 +305,4 @@ if __name__ == '__main__':
     ws[f"C{ws.max_row}"].font = Font(bold=True)
 
     wb.save(os.path.join(excel_folder, 'time_processing.xlsx'))
-    print("🎉 Xử lý hoàn tất!")
+    print("\n🎉 Xử lý hoàn tất toàn bộ ảnh!")

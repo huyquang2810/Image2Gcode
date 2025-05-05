@@ -1,6 +1,5 @@
 .DS_Store
 .vscode
 .venv/
-out/
-excel/
-img/
+#excel/
+#img/

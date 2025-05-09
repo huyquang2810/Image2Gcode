@@ -14,16 +14,25 @@ from PIL import Image as PILImage
 from openpyxl.styles import Font
 import matplotlib.pyplot as plt
 from sklearn.cluster import DBSCAN
+import subprocess
+from svgpathtools import svg2paths
 # Douglas-Peucker Algorithm
-def simplify_and_adaptive_resample(points, simplify_epsilon=1.0, angle_thresh=10, min_spacing=4):
+def simplify_and_adaptive_resample(points, angle_thresh=15, min_spacing=4, simplify_epsilon=0.5):
     if len(points) < 3:
         return points
 
-    approx = cv2.approxPolyDP(points, epsilon=simplify_epsilon, closed=True)
-    if len(approx) < 3:
+    # Dùng approxPolyDP nhẹ để bỏ răng cưa nhỏ
+    if simplify_epsilon > 0:
+        approx = cv2.approxPolyDP(points, epsilon=simplify_epsilon, closed=True)
+        if len(approx) < 3:
+            approx = points
+    else:
         approx = points
 
     approx = approx.squeeze()
+    if approx.ndim == 1:
+        approx = approx[np.newaxis, :]
+
     keep_points = [approx[0]]
 
     for i in range(1, len(approx) - 1):
@@ -34,19 +43,28 @@ def simplify_and_adaptive_resample(points, simplify_epsilon=1.0, angle_thresh=10
         v1 = p_curr - p_prev
         v2 = p_next - p_curr
 
-        cos_angle = np.dot(v1, v2) / (np.linalg.norm(v1) * np.linalg.norm(v2) + 1e-8)
+        norm1 = np.linalg.norm(v1)
+        norm2 = np.linalg.norm(v2)
+        if norm1 == 0 or norm2 == 0:
+            continue
+
+        cos_angle = np.dot(v1, v2) / (norm1 * norm2)
         angle = np.degrees(np.arccos(np.clip(cos_angle, -1.0, 1.0)))
 
         dist = np.linalg.norm(p_curr - keep_points[-1])
-        if angle < (180 - angle_thresh) or dist >= min_spacing:
+
+        if angle < (180 - angle_thresh) or angle > (180 + angle_thresh):
+            keep_points.append(p_curr)
+        elif dist >= min_spacing:
             keep_points.append(p_curr)
 
     keep_points.append(approx[-1])
     return np.array(keep_points, dtype=np.int32).reshape(-1, 1, 2)
 
+
 # --- Class xử lý ảnh và sinh G-code ---
 class Picture:
-    def __init__(self, filepath, x_max=100, y_max=100):
+    def __init__(self, filepath, x_max=40, y_max=40):
         self.img = Image.open(filepath).convert("RGB")
         self.img = np.array(self.img)
         self.h, self.w, self.c = self.img.shape
@@ -66,53 +84,6 @@ class Picture:
         # binary = 1.0 - (edges / 255.0).astype(float)  # <- đảo ngược để có nền trắng
         self.pre = np.stack([binary] * 3, axis=-1)
         return self.pre
-    # Ap dụng thử opening/ closing nhưng chưa cho ra kết quả tốt
-    # def gray_scale(self):
-    #     import cv2
-    #     import numpy as np
-    #
-    #     # Chuyển sang ảnh xám
-    #     gray = cv2.cvtColor(self.img, cv2.COLOR_RGB2GRAY)
-    #     self.gray = gray / 255.0  # For visualization
-    #
-    #     # Làm mượt kỹ hơn để triệt tiêu nếp nhăn nhỏ
-    #     blurred = cv2.GaussianBlur(gray, (7, 7), 0)
-    #
-    #     # Phát hiện mắt (trên ảnh gốc, chưa blur)
-    #     eye_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_eye.xml')
-    #     eyes = eye_cascade.detectMultiScale(
-    #         gray, scaleFactor=1.1, minNeighbors=5, minSize=(20, 20)
-    #     )
-    #     print(f"[INFO] Eyes detected: {len(eyes)}")
-    #
-    #     # Mặt nạ chứa nét mắt
-    #     eye_mask = np.zeros_like(gray)
-    #
-    #     for (x, y, w, h) in eyes:
-    #         eye_region = gray[y:y + h, x:x + w]
-    #         blurred_eye = cv2.GaussianBlur(eye_region, (3, 3), 0)
-    #
-    #         # Canny nhẹ để lấy nét mắt mảnh
-    #         edges_eye = cv2.Canny(blurred_eye, threshold1=15, threshold2=40)
-    #
-    #         # Chèn lại vào mask tổng
-    #         eye_mask[y:y + h, x:x + w] = edges_eye
-    #
-    #     # Canny toàn ảnh với ngưỡng cao hơn để tránh viền chân chim
-    #     edges = cv2.Canny(blurred, threshold1=70, threshold2=160)
-    #
-    #     # Kết hợp mắt + toàn ảnh
-    #     combined_edges = cv2.bitwise_or(edges, eye_mask)
-    #
-    #     # KHÔNG dilate để giữ nét mảnh
-    #     # Nếu cần tô đậm thì có thể thử:
-    #     # kernel = np.ones((1, 1), np.uint8)
-    #     # combined_edges = cv2.dilate(combined_edges, kernel, iterations=1)
-    #
-    #     # Kết quả nhị phân 3 kênh
-    #     binary = (combined_edges / 255.0).astype(float)
-    #     self.pre = np.stack([binary] * 3, axis=-1)
-    #     return self.pre
 
     # def gray_scale(self):
     #     gray = cv2.cvtColor(self.img, cv2.COLOR_RGB2GRAY)
@@ -150,79 +121,171 @@ class Picture:
             plt.imsave(output + '_binary.jpg', binary_inverted, cmap='gray')
             print('✅ Saved ' + output + '_binary.jpg ')
 
-        # plt.imshow(self.pre, cmap='gray')
-        # plt.axis('off')
-        # plt.imsave(output + '_binary.jpg', self.pre)
-        # print('✅ Saved ' + output + '_binary.jpg')
-    # hàm gốc chưa chỉnh
-    # def gen_gcode(self):
+
+    # eps=10, simplify_epsilon=1
+    # def gen_gcode(self, eps=5, simplify_epsilon=0.5, min_spacing=4, min_contour_len=10):
     #     binary = (self.pre[:, :, 0] > 0.5).astype(np.uint8) * 255
     #     contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
     #     ratio = self.x_max / max(self.w, self.h)
     #     total_points = 0
+    #
+    #     # Tính center mỗi contour
+    #     centers = []
+    #     valid_contours = []
     #     for contour in contours:
-    #         if len(contour) < 2:
+    #         if len(contour) < min_contour_len:
     #             continue
-    #         total_points += len(contour)
-    #         x0, y0 = contour[0][0]
-    #         y0_flipped = self.h - y0
-    #         self.gcode.append(f"G0 X{x0 * ratio:.4f} Y{y0_flipped * ratio:.4f}")
-    #         for pt in contour[1:]:
-    #             x, y = pt[0]
-    #             y_flipped = self.h - y
-    #             self.gcode.append(f"G1 X{x * ratio:.4f} Y{y_flipped * ratio:.4f}")
+    #         M = cv2.moments(contour)
+    #         if M["m00"] != 0:
+    #             cx = int(M["m10"] / M["m00"])
+    #             cy = int(M["m01"] / M["m00"])
+    #         else:
+    #             cx, cy = contour[0][0]
+    #         centers.append([cx, cy])
+    #         valid_contours.append(contour)
+    #
+    #     # Gom cụm bằng DBSCAN
+    #     if not centers:
+    #         return self.gcode, total_points
+    #     labels = DBSCAN(eps=eps, min_samples=1).fit_predict(centers)
+    #
+    #     clusters = {}
+    #     for label, contour in zip(labels, valid_contours):
+    #         clusters.setdefault(label, []).append(contour)
+    #
+    #     for cluster in clusters.values():
+    #         for contour in cluster:  # ❗ Xử lý từng contour riêng, không nối lại
+    #             simplified = simplify_and_adaptive_resample(
+    #                 contour,
+    #                 simplify_epsilon=simplify_epsilon,
+    #                 angle_thresh=15,
+    #                 min_spacing=min_spacing
+    #             )
+    #             if len(simplified) < 2:
+    #                 continue
+    #             total_points += len(simplified)
+    #             x0, y0 = simplified[0][0]
+    #             y0_flipped = self.h - y0
+    #             self.gcode.append(f"G0 X{x0 * ratio:.2f} Y{y0_flipped * ratio:.2f}")
+    #             for pt in simplified[1:]:
+    #                 x, y = pt[0]
+    #                 y_flipped = self.h - y
+    #                 self.gcode.append(f"G1 X{x * ratio:.2f} Y{y_flipped * ratio:.2f}")
+    #
     #     return self.gcode, total_points
+    #
 
+    # def gen_gcode(self, steps=20):
+    #     import subprocess
+    #     from PIL import Image as PILImage
+    #     from svgpathtools import svg2paths
+    #
+    #     # 1. Chuẩn bị binary ảnh → PBM
+    #     binary = (self.pre[:, :, 0] > 0.5).astype(np.uint8)
+    #     pil_bin = PILImage.fromarray((1 - binary) * 255).convert("1")
+    #     pbm_path = "temp.pbm"
+    #     svg_path = "temp.svg"
+    #     pil_bin.save(pbm_path)
+    #
+    #     # 2. Gọi Potrace → SVG
+    #     subprocess.run(["potrace", pbm_path, "-s", "-o", svg_path], check=True)
+    #
+    #     # 3. Đọc SVG path
+    #     paths, _ = svg2paths(svg_path)
+    #
+    #     # 4. Tính bounding box thật trong SVG
+    #     all_x, all_y = [], []
+    #     for path in paths:
+    #         for seg in path:
+    #             for t in np.linspace(0, 1, steps):
+    #                 pt = seg.point(t)
+    #                 all_x.append(pt.real)
+    #                 all_y.append(pt.imag)
+    #
+    #     x_min, x_max_svg = min(all_x), max(all_x)
+    #     y_min, y_max_svg = min(all_y), max(all_y)
+    #     svg_w = x_max_svg - x_min
+    #     svg_h = y_max_svg - y_min
+    #
+    #     x_ratio = self.x_max / svg_w
+    #     y_ratio = self.y_max / svg_h
+    #
+    #     self.gcode = ["G28"]
+    #     total_points = 0
+    #
+    #     # 5. Sinh G-code đã scale đúng theo x_max / y_max
+    #     for path in paths:
+    #         for segment in path:
+    #             for i, t in enumerate(np.linspace(0, 1, steps)):
+    #                 pt = segment.point(t)
+    #                 x = (pt.real - x_min) * x_ratio
+    #                 y = (pt.imag - y_min) * y_ratio
+    #                 cmd = "G0" if i == 0 else "G1"
+    #                 self.gcode.append(f"{cmd} X{x:.2f} Y{y:.2f}")
+    #                 total_points += 1
+    #
+    #     return self.gcode, total_points
+    # áp dụng Douglas-Peucker Algorithm
+    def gen_gcode(self, steps=30, angle_thresh=15, min_spacing=3):
+        import subprocess
+        from PIL import Image as PILImage
+        from svgpathtools import svg2paths
 
-    # eps=1, simplify_epsilon=1
-    def gen_gcode(self, eps=5, simplify_epsilon=0.5, min_spacing=4, min_contour_len=10):
-        binary = (self.pre[:, :, 0] > 0.5).astype(np.uint8) * 255
-        contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-        ratio = self.x_max / max(self.w, self.h)
+        # 1. Tạo ảnh nhị phân .pbm cho Potrace
+        binary = (self.pre[:, :, 0] > 0.5).astype(np.uint8)
+        pil_bin = PILImage.fromarray((1 - binary) * 255).convert("1")
+        pbm_path = "temp.pbm"
+        svg_path = "temp.svg"
+        pil_bin.save(pbm_path)
+
+        # 2. Gọi Potrace → SVG
+        subprocess.run(["potrace", pbm_path, "-s", "-o", svg_path], check=True)
+
+        # 3. Đọc SVG path
+        paths, _ = svg2paths(svg_path)
+
+        # 4. Tính bounding box SVG để scale chính xác
+        all_x, all_y = [], []
+        for path in paths:
+            for seg in path:
+                for t in np.linspace(0, 1, steps):
+                    pt = seg.point(t)
+                    all_x.append(pt.real)
+                    all_y.append(pt.imag)
+
+        x_min, x_max_svg = min(all_x), max(all_x)
+        y_min, y_max_svg = min(all_y), max(all_y)
+        svg_w = x_max_svg - x_min
+        svg_h = y_max_svg - y_min
+
+        x_ratio = self.x_max / svg_w
+        y_ratio = self.y_max / svg_h
+
+        self.gcode = ["G28"]
         total_points = 0
 
-        # Tính center mỗi contour
-        centers = []
-        valid_contours = []
-        for contour in contours:
-            if len(contour) < min_contour_len:
-                continue
-            M = cv2.moments(contour)
-            if M["m00"] != 0:
-                cx = int(M["m10"] / M["m00"])
-                cy = int(M["m01"] / M["m00"])
-            else:
-                cx, cy = contour[0][0]
-            centers.append([cx, cy])
-            valid_contours.append(contour)
+        # 5. Nội suy + simplify + sinh G-code
+        for path in paths:
+            for segment in path:
+                pts = []
+                for t in np.linspace(0, 1, steps):
+                    pt = segment.point(t)
+                    x = (pt.real - x_min) * x_ratio
+                    y = (pt.imag - y_min) * y_ratio
+                    pts.append([x, y])
 
-        # Gom cụm bằng DBSCAN
-        if not centers:
-            return self.gcode, total_points
-        labels = DBSCAN(eps=eps, min_samples=1).fit_predict(centers)
-
-        clusters = {}
-        for label, contour in zip(labels, valid_contours):
-            clusters.setdefault(label, []).append(contour)
-
-        for cluster in clusters.values():
-            for contour in cluster:  # ❗ Xử lý từng contour riêng, không nối lại
-                simplified = simplify_and_adaptive_resample(
-                    contour,
-                    simplify_epsilon=simplify_epsilon,
-                    angle_thresh=15,
-                    min_spacing=min_spacing
-                )
+                pts_np = np.array(pts, dtype=np.int32).reshape(-1, 1, 2)
+                simplified = simplify_and_adaptive_resample(pts_np, angle_thresh=angle_thresh, min_spacing=min_spacing)
                 if len(simplified) < 2:
                     continue
-                total_points += len(simplified)
+
                 x0, y0 = simplified[0][0]
-                y0_flipped = self.h - y0
-                self.gcode.append(f"G0 X{x0 * ratio:.2f} Y{y0_flipped * ratio:.2f}")
+                self.gcode.append(f"G0 X{x0:.2f} Y{y0:.2f}")
+                total_points += 1
                 for pt in simplified[1:]:
                     x, y = pt[0]
-                    y_flipped = self.h - y
-                    self.gcode.append(f"G1 X{x * ratio:.2f} Y{y_flipped * ratio:.2f}")
+                    self.gcode.append(f"G1 X{x:.2f} Y{y:.2f}")
+                    total_points += 1
 
         return self.gcode, total_points
 
@@ -433,58 +496,3 @@ if __name__ == '__main__':
     wb.save(os.path.join(excel_folder, 'time_processing.xlsx'))
     print("\n🎉 Xử lý hoàn tất toàn bộ ảnh!")
 
-# Test 1 ảnh với cụm các giá trị chạy ra file output_result
-# eps_values = [3, 5, 7, 10]
-# simplify_epsilon_values = [0.5, 1.0, 1.5]
-# min_spacing_values = [4, 6, 8]
-# min_contour_len_values = [10, 15, 20]
-
-# def main():
-#     # Đặt thư mục chứa ảnh đầu vào
-#     input_face_dir = "img"
-#
-#     # Kiểm tra thư mục có tồn tại không
-#     if not os.path.exists(input_face_dir):
-#         print(f"❌ Không tìm thấy thư mục {input_face_dir}. Vui lòng kiểm tra lại.")
-#         return
-#
-#     # Hỏi người dùng nhập tên ảnh
-#     input_image_filename = input("Nhập tên ảnh cần xử lý (ví dụ: 1.jpg): ")
-#
-#     # Kiểm tra nếu ảnh có trong thư mục
-#     input_image_path = os.path.join(input_face_dir, input_image_filename)
-#     if not os.path.exists(input_image_path):
-#         print(f"❌ Không tìm thấy ảnh {input_image_filename} trong thư mục {input_face_dir}. Vui lòng kiểm tra lại.")
-#         return
-#
-#     print(f"Đang xử lý ảnh: {input_image_filename}")
-#
-#     # Tạo thư mục output để lưu kết quả
-#     output_folder = "output_results"
-#     os.makedirs(output_folder, exist_ok=True)
-#
-#     # Lặp qua các giá trị tham số để thử nghiệm
-#     for eps in eps_values:
-#         for simplify_epsilon in simplify_epsilon_values:
-#             for min_spacing in min_spacing_values:
-#                 for min_contour_len in min_contour_len_values:
-#                     print(f"\nĐang thử nghiệm với eps={eps}, simplify_epsilon={simplify_epsilon}, min_spacing={min_spacing}, min_contour_len={min_contour_len}")
-#                     start_time = datetime.now()
-#
-#                     # Tạo tên file output từ các giá trị tham số
-#                     output_name = os.path.join(output_folder, f"result_eps{eps}_simplify{simplify_epsilon}_spacing{min_spacing}_contour{min_contour_len}")
-#
-#                     # Xử lý ảnh và sinh G-code
-#                     pic = Picture(input_image_path)
-#                     pic.gray_scale()  # Xử lý ảnh xám
-#                     # pic.save_binary(output_name)  # Lưu ảnh nhị phân
-#                     gcode, num_points = pic.gen_gcode(eps=eps, simplify_epsilon=simplify_epsilon, min_spacing=min_spacing, min_contour_len=min_contour_len)
-#                     pic.save_gcode(output_name)  # Lưu G-code
-#
-#                     duration = (datetime.now() - start_time).total_seconds()
-#                     print(f"✅ Đã hoàn thành thử nghiệm: {output_name}, với {num_points} điểm G-code, thời gian: {duration:.3f} giây")
-#
-#     print("\n🎉 Xử lý hoàn tất toàn bộ ảnh!")
-#
-# if __name__ == '__main__':
-#     main()

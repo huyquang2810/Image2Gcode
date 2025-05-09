@@ -46,7 +46,7 @@ def simplify_and_adaptive_resample(points, simplify_epsilon=1.0, angle_thresh=10
 
 # --- Class xử lý ảnh và sinh G-code ---
 class Picture:
-    def __init__(self, filepath, x_max=100, y_max=100):
+    def __init__(self, filepath, x_max=40, y_max=40):
         self.img = Image.open(filepath).convert("RGB")
         self.img = np.array(self.img)
         self.h, self.w, self.c = self.img.shape

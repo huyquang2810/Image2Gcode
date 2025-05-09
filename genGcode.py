@@ -16,6 +16,8 @@ import matplotlib.pyplot as plt
 from sklearn.cluster import DBSCAN
 import subprocess
 from svgpathtools import svg2paths
+from skimage.morphology import skeletonize
+
 # Douglas-Peucker Algorithm
 def simplify_and_adaptive_resample(points, angle_thresh=15, min_spacing=4, simplify_epsilon=0.5):
     if len(points) < 3:
@@ -61,6 +63,11 @@ def simplify_and_adaptive_resample(points, angle_thresh=15, min_spacing=4, simpl
     keep_points.append(approx[-1])
     return np.array(keep_points, dtype=np.int32).reshape(-1, 1, 2)
 
+def thin_image(binary_img):
+    binary_bool = (binary_img > 0).astype(np.bool_)
+    skeleton = skeletonize(binary_bool)
+    return (skeleton.astype(np.uint8) * 255)
+
 
 # --- Class xử lý ảnh và sinh G-code ---
 class Picture:
@@ -75,15 +82,41 @@ class Picture:
 
     def gray_scale(self):
         gray = cv2.cvtColor(self.img, cv2.COLOR_RGB2GRAY)
-        self.gray = gray / 255.0  # For visualization
-
         blurred = cv2.GaussianBlur(gray, (3, 3), 0)
-        edges = cv2.Canny(blurred, threshold1=50, threshold2=150)
 
-        binary = (edges / 255.0).astype(float)
-        # binary = 1.0 - (edges / 255.0).astype(float)  # <- đảo ngược để có nền trắng
-        self.pre = np.stack([binary] * 3, axis=-1)
+        # Adaptive threshold tạo nét trắng nền đen
+        binary = cv2.adaptiveThreshold(
+            blurred, 255,
+            cv2.ADAPTIVE_THRESH_MEAN_C,
+            cv2.THRESH_BINARY_INV,
+            blockSize=11,
+            C=3
+        )
+
+        # Morphological Opening: bỏ no1ise nhỏ
+        kernel = np.ones((3, 3), np.uint8)
+        opened = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel, iterations=1)
+
+        # Morphological Closing: nối nét đứt, lỗ hổng nhỏ
+        cleaned = cv2.morphologyEx(opened, cv2.MORPH_CLOSE, kernel, iterations=1)
+
+        # Trả về ảnh nhị phân 3 kênh để phù hợp pipeline
+        self.pre = np.stack([(cleaned / 255.0)] * 3, axis=-1)
         return self.pre
+
+
+
+    # def gray_scale(self):
+    #     gray = cv2.cvtColor(self.img, cv2.COLOR_RGB2GRAY)
+    #     self.gray = gray / 255.0  # For visualization
+    #
+    #     blurred = cv2.GaussianBlur(gray, (3, 3), 0)
+    #     edges = cv2.Canny(blurred, threshold1=50, threshold2=150)
+    #
+    #     binary = (edges / 255.0).astype(float)
+    #     # binary = 1.0 - (edges / 255.0).astype(float)  # <- đảo ngược để có nền trắng
+    #     self.pre = np.stack([binary] * 3, axis=-1)
+    #     return self.pre
 
     # def gray_scale(self):
     #     gray = cv2.cvtColor(self.img, cv2.COLOR_RGB2GRAY)
@@ -121,66 +154,66 @@ class Picture:
             plt.imsave(output + '_binary.jpg', binary_inverted, cmap='gray')
             print('✅ Saved ' + output + '_binary.jpg ')
 
+    def gen_gcode(self, steps=30):
+        import subprocess
+        from PIL import Image as PILImage
+        from svgpathtools import svg2paths
 
-    # eps=10, simplify_epsilon=1
-    # def gen_gcode(self, eps=5, simplify_epsilon=0.5, min_spacing=4, min_contour_len=10):
-    #     binary = (self.pre[:, :, 0] > 0.5).astype(np.uint8) * 255
-    #     contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-    #     ratio = self.x_max / max(self.w, self.h)
-    #     total_points = 0
-    #
-    #     # Tính center mỗi contour
-    #     centers = []
-    #     valid_contours = []
-    #     for contour in contours:
-    #         if len(contour) < min_contour_len:
-    #             continue
-    #         M = cv2.moments(contour)
-    #         if M["m00"] != 0:
-    #             cx = int(M["m10"] / M["m00"])
-    #             cy = int(M["m01"] / M["m00"])
-    #         else:
-    #             cx, cy = contour[0][0]
-    #         centers.append([cx, cy])
-    #         valid_contours.append(contour)
-    #
-    #     # Gom cụm bằng DBSCAN
-    #     if not centers:
-    #         return self.gcode, total_points
-    #     labels = DBSCAN(eps=eps, min_samples=1).fit_predict(centers)
-    #
-    #     clusters = {}
-    #     for label, contour in zip(labels, valid_contours):
-    #         clusters.setdefault(label, []).append(contour)
-    #
-    #     for cluster in clusters.values():
-    #         for contour in cluster:  # ❗ Xử lý từng contour riêng, không nối lại
-    #             simplified = simplify_and_adaptive_resample(
-    #                 contour,
-    #                 simplify_epsilon=simplify_epsilon,
-    #                 angle_thresh=15,
-    #                 min_spacing=min_spacing
-    #             )
-    #             if len(simplified) < 2:
-    #                 continue
-    #             total_points += len(simplified)
-    #             x0, y0 = simplified[0][0]
-    #             y0_flipped = self.h - y0
-    #             self.gcode.append(f"G0 X{x0 * ratio:.2f} Y{y0_flipped * ratio:.2f}")
-    #             for pt in simplified[1:]:
-    #                 x, y = pt[0]
-    #                 y_flipped = self.h - y
-    #                 self.gcode.append(f"G1 X{x * ratio:.2f} Y{y_flipped * ratio:.2f}")
-    #
-    #     return self.gcode, total_points
-    #
+        # 1. Chuẩn bị ảnh nhị phân → PBM
+        binary = (self.pre[:, :, 0] > 0.5).astype(np.uint8)
+        pil_bin = PILImage.fromarray((1 - binary) * 255).convert("1")
+        pbm_path = "temp.pbm"
+        svg_path = "temp.svg"
+        pil_bin.save(pbm_path)
 
-    # def gen_gcode(self, steps=20):
+        # 2. Gọi Potrace để sinh SVG
+        subprocess.run(["potrace", pbm_path, "-s", "-o", svg_path], check=True)
+
+        # 3. Đọc SVG path
+        paths, _ = svg2paths(svg_path)
+
+        # 4. Tìm bounding box thật của tất cả path
+        all_x, all_y = [], []
+        for path in paths:
+            for seg in path:
+                for t in np.linspace(0, 1, steps):
+                    pt = seg.point(t)
+                    all_x.append(pt.real)
+                    all_y.append(pt.imag)
+
+        x_min, x_max_svg = min(all_x), max(all_x)
+        y_min, y_max_svg = min(all_y), max(all_y)
+        svg_w = x_max_svg - x_min
+        svg_h = y_max_svg - y_min
+
+        # 5. Scale giữ tỷ lệ, căn giữa khung vẽ
+        ratio = min(self.x_max / svg_w, self.y_max / svg_h)
+        x_offset = (self.x_max - svg_w * ratio) / 2
+        y_offset = (self.y_max - svg_h * ratio) / 2
+
+        self.gcode = ["G28"]
+        total_points = 0
+
+        # 6. Sinh G-code
+        for path in paths:
+            for segment in path:
+                for i, t in enumerate(np.linspace(0, 1, steps)):
+                    pt = segment.point(t)
+                    x = (pt.real - x_min) * ratio + x_offset
+                    y = (pt.imag - y_min) * ratio + y_offset
+                    cmd = "G0" if i == 0 else "G1"
+                    self.gcode.append(f"{cmd} X{x:.2f} Y{y:.2f}")
+                    total_points += 1
+
+        return self.gcode, total_points
+
+    # áp dụng Douglas-Peucker Algorithm
+    # def gen_gcode(self, steps=30, angle_thresh=15, min_spacing=3):
     #     import subprocess
     #     from PIL import Image as PILImage
     #     from svgpathtools import svg2paths
     #
-    #     # 1. Chuẩn bị binary ảnh → PBM
+    #     # 1. Tạo ảnh nhị phân .pbm cho Potrace
     #     binary = (self.pre[:, :, 0] > 0.5).astype(np.uint8)
     #     pil_bin = PILImage.fromarray((1 - binary) * 255).convert("1")
     #     pbm_path = "temp.pbm"
@@ -193,7 +226,7 @@ class Picture:
     #     # 3. Đọc SVG path
     #     paths, _ = svg2paths(svg_path)
     #
-    #     # 4. Tính bounding box thật trong SVG
+    #     # 4. Tính bounding box SVG để scale chính xác
     #     all_x, all_y = [], []
     #     for path in paths:
     #         for seg in path:
@@ -213,81 +246,30 @@ class Picture:
     #     self.gcode = ["G28"]
     #     total_points = 0
     #
-    #     # 5. Sinh G-code đã scale đúng theo x_max / y_max
+    #     # 5. Nội suy + simplify + sinh G-code
     #     for path in paths:
     #         for segment in path:
-    #             for i, t in enumerate(np.linspace(0, 1, steps)):
+    #             pts = []
+    #             for t in np.linspace(0, 1, steps):
     #                 pt = segment.point(t)
     #                 x = (pt.real - x_min) * x_ratio
     #                 y = (pt.imag - y_min) * y_ratio
-    #                 cmd = "G0" if i == 0 else "G1"
-    #                 self.gcode.append(f"{cmd} X{x:.2f} Y{y:.2f}")
+    #                 pts.append([x, y])
+    #
+    #             pts_np = np.array(pts, dtype=np.int32).reshape(-1, 1, 2)
+    #             simplified = simplify_and_adaptive_resample(pts_np, angle_thresh=angle_thresh, min_spacing=min_spacing)
+    #             if len(simplified) < 2:
+    #                 continue
+    #
+    #             x0, y0 = simplified[0][0]
+    #             self.gcode.append(f"G0 X{x0:.2f} Y{y0:.2f}")
+    #             total_points += 1
+    #             for pt in simplified[1:]:
+    #                 x, y = pt[0]
+    #                 self.gcode.append(f"G1 X{x:.2f} Y{y:.2f}")
     #                 total_points += 1
     #
     #     return self.gcode, total_points
-    # áp dụng Douglas-Peucker Algorithm
-    def gen_gcode(self, steps=30, angle_thresh=15, min_spacing=3):
-        import subprocess
-        from PIL import Image as PILImage
-        from svgpathtools import svg2paths
-
-        # 1. Tạo ảnh nhị phân .pbm cho Potrace
-        binary = (self.pre[:, :, 0] > 0.5).astype(np.uint8)
-        pil_bin = PILImage.fromarray((1 - binary) * 255).convert("1")
-        pbm_path = "temp.pbm"
-        svg_path = "temp.svg"
-        pil_bin.save(pbm_path)
-
-        # 2. Gọi Potrace → SVG
-        subprocess.run(["potrace", pbm_path, "-s", "-o", svg_path], check=True)
-
-        # 3. Đọc SVG path
-        paths, _ = svg2paths(svg_path)
-
-        # 4. Tính bounding box SVG để scale chính xác
-        all_x, all_y = [], []
-        for path in paths:
-            for seg in path:
-                for t in np.linspace(0, 1, steps):
-                    pt = seg.point(t)
-                    all_x.append(pt.real)
-                    all_y.append(pt.imag)
-
-        x_min, x_max_svg = min(all_x), max(all_x)
-        y_min, y_max_svg = min(all_y), max(all_y)
-        svg_w = x_max_svg - x_min
-        svg_h = y_max_svg - y_min
-
-        x_ratio = self.x_max / svg_w
-        y_ratio = self.y_max / svg_h
-
-        self.gcode = ["G28"]
-        total_points = 0
-
-        # 5. Nội suy + simplify + sinh G-code
-        for path in paths:
-            for segment in path:
-                pts = []
-                for t in np.linspace(0, 1, steps):
-                    pt = segment.point(t)
-                    x = (pt.real - x_min) * x_ratio
-                    y = (pt.imag - y_min) * y_ratio
-                    pts.append([x, y])
-
-                pts_np = np.array(pts, dtype=np.int32).reshape(-1, 1, 2)
-                simplified = simplify_and_adaptive_resample(pts_np, angle_thresh=angle_thresh, min_spacing=min_spacing)
-                if len(simplified) < 2:
-                    continue
-
-                x0, y0 = simplified[0][0]
-                self.gcode.append(f"G0 X{x0:.2f} Y{y0:.2f}")
-                total_points += 1
-                for pt in simplified[1:]:
-                    x, y = pt[0]
-                    self.gcode.append(f"G1 X{x:.2f} Y{y:.2f}")
-                    total_points += 1
-
-        return self.gcode, total_points
 
     def save_gcode(self, output_name):
         os.makedirs(os.path.dirname(output_name), exist_ok=True)

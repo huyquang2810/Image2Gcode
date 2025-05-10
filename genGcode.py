@@ -80,43 +80,43 @@ class Picture:
         self.x_max = x_max
         self.y_max = y_max
 
-    def gray_scale(self):
-        gray = cv2.cvtColor(self.img, cv2.COLOR_RGB2GRAY)
-        blurred = cv2.GaussianBlur(gray, (3, 3), 0)
-
-        # Adaptive threshold tạo nét trắng nền đen
-        binary = cv2.adaptiveThreshold(
-            blurred, 255,
-            cv2.ADAPTIVE_THRESH_MEAN_C,
-            cv2.THRESH_BINARY_INV,
-            blockSize=11,
-            C=3
-        )
-
-        # Morphological Opening: bỏ no1ise nhỏ
-        kernel = np.ones((3, 3), np.uint8)
-        opened = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel, iterations=1)
-
-        # Morphological Closing: nối nét đứt, lỗ hổng nhỏ
-        cleaned = cv2.morphologyEx(opened, cv2.MORPH_CLOSE, kernel, iterations=1)
-
-        # Trả về ảnh nhị phân 3 kênh để phù hợp pipeline
-        self.pre = np.stack([(cleaned / 255.0)] * 3, axis=-1)
-        return self.pre
-
-
-
     # def gray_scale(self):
     #     gray = cv2.cvtColor(self.img, cv2.COLOR_RGB2GRAY)
-    #     self.gray = gray / 255.0  # For visualization
-    #
     #     blurred = cv2.GaussianBlur(gray, (3, 3), 0)
-    #     edges = cv2.Canny(blurred, threshold1=50, threshold2=150)
     #
-    #     binary = (edges / 255.0).astype(float)
-    #     # binary = 1.0 - (edges / 255.0).astype(float)  # <- đảo ngược để có nền trắng
-    #     self.pre = np.stack([binary] * 3, axis=-1)
+    #     # Adaptive threshold tạo nét trắng nền đen
+    #     binary = cv2.adaptiveThreshold(
+    #         blurred, 255,
+    #         cv2.ADAPTIVE_THRESH_MEAN_C,
+    #         cv2.THRESH_BINARY_INV,
+    #         blockSize=11,
+    #         C=3
+    #     )
+    #
+    #     # Morphological Opening: bỏ no1ise nhỏ
+    #     kernel = np.ones((3, 3), np.uint8)
+    #     opened = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel, iterations=1)
+    #
+    #     # Morphological Closing: nối nét đứt, lỗ hổng nhỏ
+    #     cleaned = cv2.morphologyEx(opened, cv2.MORPH_CLOSE, kernel, iterations=1)
+    #
+    #     # Trả về ảnh nhị phân 3 kênh để phù hợp pipeline
+    #     self.pre = np.stack([(cleaned / 255.0)] * 3, axis=-1)
     #     return self.pre
+
+
+
+    def gray_scale(self):
+        gray = cv2.cvtColor(self.img, cv2.COLOR_RGB2GRAY)
+        self.gray = gray / 255.0  # For visualization
+
+        blurred = cv2.GaussianBlur(gray, (3, 3), 0)
+        edges = cv2.Canny(blurred, threshold1=50, threshold2=150)
+
+        binary = (edges / 255.0).astype(float)
+        # binary = 1.0 - (edges / 255.0).astype(float)  # <- đảo ngược để có nền trắng
+        self.pre = np.stack([binary] * 3, axis=-1)
+        return self.pre
 
     # def gray_scale(self):
     #     gray = cv2.cvtColor(self.img, cv2.COLOR_RGB2GRAY)

@@ -14,11 +14,11 @@ from PIL import Image as PILImage
 from openpyxl.styles import Font
 import matplotlib.pyplot as plt
 from sklearn.cluster import DBSCAN
-# Douglas-Peucker Algorithm
+# Adaptive Resampling (góc + khoảng cách)
 def simplify_and_adaptive_resample(points, simplify_epsilon=1.0, angle_thresh=10, min_spacing=4):
     if len(points) < 3:
         return points
-
+    # Douglas-Peucker simplification cv2.approxPolyDP
     approx = cv2.approxPolyDP(points, epsilon=simplify_epsilon, closed=True)
     if len(approx) < 3:
         approx = points

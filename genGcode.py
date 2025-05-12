@@ -15,34 +15,32 @@ from openpyxl.styles import Font
 import matplotlib.pyplot as plt
 from sklearn.cluster import DBSCAN
 # Adaptive Resampling (góc + khoảng cách)
-def simplify_and_adaptive_resample(points, simplify_epsilon=1.0, angle_thresh=10, min_spacing=4):
+def simplify_keep_corners_only(points, simplify_epsilon=0.5, angle_thresh=15, min_spacing=4):
     if len(points) < 3:
         return points
-    # Douglas-Peucker simplification cv2.approxPolyDP
-    approx = cv2.approxPolyDP(points, epsilon=simplify_epsilon, closed=True)
-    if len(approx) < 3:
-        approx = points
 
+    approx = cv2.approxPolyDP(points, epsilon=simplify_epsilon, closed=False)
     approx = approx.squeeze()
-    keep_points = [approx[0]]
 
+    filtered = [approx[0]]
     for i in range(1, len(approx) - 1):
-        p_prev = approx[i - 1]
-        p_curr = approx[i]
-        p_next = approx[i + 1]
+        A = approx[i - 1]
+        B = approx[i]
+        C = approx[i + 1]
 
-        v1 = p_curr - p_prev
-        v2 = p_next - p_curr
+        v1 = B - A
+        v2 = C - B
 
         cos_angle = np.dot(v1, v2) / (np.linalg.norm(v1) * np.linalg.norm(v2) + 1e-8)
         angle = np.degrees(np.arccos(np.clip(cos_angle, -1.0, 1.0)))
 
-        dist = np.linalg.norm(p_curr - keep_points[-1])
-        if angle < (180 - angle_thresh) or dist >= min_spacing:
-            keep_points.append(p_curr)
+        dist = np.linalg.norm(B - filtered[-1])
+        if angle < (180 - angle_thresh) or dist > min_spacing:
+            filtered.append(B)
 
-    keep_points.append(approx[-1])
-    return np.array(keep_points, dtype=np.int32).reshape(-1, 1, 2)
+    filtered.append(approx[-1])
+    return np.array(filtered, dtype=np.int32).reshape(-1, 1, 2)
+
 
 # --- Class xử lý ảnh và sinh G-code ---
 class Picture:
@@ -66,71 +64,6 @@ class Picture:
         # binary = 1.0 - (edges / 255.0).astype(float)  # <- đảo ngược để có nền trắng
         self.pre = np.stack([binary] * 3, axis=-1)
         return self.pre
-    # Ap dụng thử opening/ closing nhưng chưa cho ra kết quả tốt
-    # def gray_scale(self):
-    #     import cv2
-    #     import numpy as np
-    #
-    #     # Chuyển sang ảnh xám
-    #     gray = cv2.cvtColor(self.img, cv2.COLOR_RGB2GRAY)
-    #     self.gray = gray / 255.0  # For visualization
-    #
-    #     # Làm mượt kỹ hơn để triệt tiêu nếp nhăn nhỏ
-    #     blurred = cv2.GaussianBlur(gray, (7, 7), 0)
-    #
-    #     # Phát hiện mắt (trên ảnh gốc, chưa blur)
-    #     eye_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_eye.xml')
-    #     eyes = eye_cascade.detectMultiScale(
-    #         gray, scaleFactor=1.1, minNeighbors=5, minSize=(20, 20)
-    #     )
-    #     print(f"[INFO] Eyes detected: {len(eyes)}")
-    #
-    #     # Mặt nạ chứa nét mắt
-    #     eye_mask = np.zeros_like(gray)
-    #
-    #     for (x, y, w, h) in eyes:
-    #         eye_region = gray[y:y + h, x:x + w]
-    #         blurred_eye = cv2.GaussianBlur(eye_region, (3, 3), 0)
-    #
-    #         # Canny nhẹ để lấy nét mắt mảnh
-    #         edges_eye = cv2.Canny(blurred_eye, threshold1=15, threshold2=40)
-    #
-    #         # Chèn lại vào mask tổng
-    #         eye_mask[y:y + h, x:x + w] = edges_eye
-    #
-    #     # Canny toàn ảnh với ngưỡng cao hơn để tránh viền chân chim
-    #     edges = cv2.Canny(blurred, threshold1=70, threshold2=160)
-    #
-    #     # Kết hợp mắt + toàn ảnh
-    #     combined_edges = cv2.bitwise_or(edges, eye_mask)
-    #
-    #     # KHÔNG dilate để giữ nét mảnh
-    #     # Nếu cần tô đậm thì có thể thử:
-    #     # kernel = np.ones((1, 1), np.uint8)
-    #     # combined_edges = cv2.dilate(combined_edges, kernel, iterations=1)
-    #
-    #     # Kết quả nhị phân 3 kênh
-    #     binary = (combined_edges / 255.0).astype(float)
-    #     self.pre = np.stack([binary] * 3, axis=-1)
-    #     return self.pre
-
-    # def gray_scale(self):
-    #     gray = cv2.cvtColor(self.img, cv2.COLOR_RGB2GRAY)
-    #     self.gray = gray / 255.0
-    #
-    #     # Làm sạch noise trước khi edge detect
-    #     blurred = cv2.GaussianBlur(gray, (3, 3), 0)  # Blur mạnh hơn (5x5)
-    #
-    #     # Morphological opening để bỏ noise nhỏ
-    #     kernel = np.ones((3, 3), np.uint8)
-    #     opened = cv2.morphologyEx(blurred, cv2.MORPH_OPEN, kernel)
-    #
-    #     edges = cv2.Canny((opened * 255).astype(np.uint8), threshold1=50, threshold2=150)
-    #     binary = (edges / 255.0).astype(float)
-    #
-    #     self.pre = np.stack([binary] * 3, axis=-1)
-    #     return self.pre
-
 
     def save_gray(self, output):
         if hasattr(self, 'gray') and self.gray is not None:
@@ -175,13 +108,67 @@ class Picture:
 
 
     # eps=1, simplify_epsilon=1
-    def gen_gcode(self, eps=5, simplify_epsilon=0.5, min_spacing=4, min_contour_len=10):
+    # def gen_gcode(self, eps=5, simplify_epsilon=0.5, min_spacing=4, min_contour_len=10):
+    #     binary = (self.pre[:, :, 0] > 0.5).astype(np.uint8) * 255
+    #     contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    #     ratio = self.x_max / max(self.w, self.h)
+    #     total_points = 0
+    #
+    #     # Tính center mỗi contour
+    #     centers = []
+    #     valid_contours = []
+    #     for contour in contours:
+    #         if len(contour) < min_contour_len:
+    #             continue
+    #         M = cv2.moments(contour)
+    #         if M["m00"] != 0:
+    #             cx = int(M["m10"] / M["m00"])
+    #             cy = int(M["m01"] / M["m00"])
+    #         else:
+    #             cx, cy = contour[0][0]
+    #         centers.append([cx, cy])
+    #         valid_contours.append(contour)
+    #
+    #     # Gom cụm bằng DBSCAN
+    #     if not centers:
+    #         return self.gcode, total_points
+    #     labels = DBSCAN(eps=eps, min_samples=1).fit_predict(centers)
+    #
+    #     clusters = {}
+    #     for label, contour in zip(labels, valid_contours):
+    #         clusters.setdefault(label, []).append(contour)
+    #
+    #     for cluster in clusters.values():
+    #         for contour in cluster:  # ❗ Xử lý từng contour riêng, không nối lại
+    #             simplified = simplify_and_adaptive_resample(
+    #                 contour,
+    #                 simplify_epsilon=simplify_epsilon,
+    #                 angle_thresh=15,
+    #                 min_spacing=min_spacing
+    #             )
+    #             if len(simplified) < 2:
+    #                 continue
+    #             total_points += len(simplified)
+    #             x0, y0 = simplified[0][0]
+    #             y0_flipped = self.h - y0
+    #             self.gcode.append(f"G0 X{x0 * ratio:.2f} Y{y0_flipped * ratio:.2f}")
+    #             for pt in simplified[1:]:
+    #                 x, y = pt[0]
+    #                 y_flipped = self.h - y
+    #                 self.gcode.append(f"G1 X{x * ratio:.2f} Y{y_flipped * ratio:.2f}")
+    #
+    #     return self.gcode, total_points
+
+    def gen_gcode(self, eps=None, simplify_epsilon=0.5, min_spacing=4, min_contour_len=10):
         binary = (self.pre[:, :, 0] > 0.5).astype(np.uint8) * 255
         contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
         ratio = self.x_max / max(self.w, self.h)
         total_points = 0
 
-        # Tính center mỗi contour
+        # Tự động tính eps nếu không truyền vào
+        if eps is None:
+            eps = max(self.w, self.h) * 0.01
+
         centers = []
         valid_contours = []
         for contour in contours:
@@ -196,18 +183,14 @@ class Picture:
             centers.append([cx, cy])
             valid_contours.append(contour)
 
-        # Gom cụm bằng DBSCAN
         if not centers:
             return self.gcode, total_points
+
         labels = DBSCAN(eps=eps, min_samples=1).fit_predict(centers)
 
-        clusters = {}
-        for label, contour in zip(labels, valid_contours):
-            clusters.setdefault(label, []).append(contour)
-
-        for cluster in clusters.values():
-            for contour in cluster:  # ❗ Xử lý từng contour riêng, không nối lại
-                simplified = simplify_and_adaptive_resample(
+        for label in set(labels):
+            for contour in [c for l, c in zip(labels, valid_contours) if l == label]:
+                simplified = simplify_keep_corners_only(
                     contour,
                     simplify_epsilon=simplify_epsilon,
                     angle_thresh=15,
@@ -409,7 +392,14 @@ if __name__ == '__main__':
         # pic.gray_scale()
         pic.save_gray(output_name)
         pic.save_binary(output_name)
-        gcode, num_points = pic.gen_gcode()
+        # gcode, num_points = pic.gen_gcode()
+        # Giữ nguyên nét, ít mất chi tiết, vẫn lọc noise nhỏ
+        gcode, num_points = pic.gen_gcode(
+            simplify_epsilon=0.6,
+            min_spacing=3,
+            min_contour_len=10
+        )
+
         # gcode, num_points = pic.gen_gcode(eps=10, n_waypoints=80, min_contour_len=40)
         pic.save_gcode(output_name)
 

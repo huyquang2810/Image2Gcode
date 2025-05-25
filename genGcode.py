@@ -48,7 +48,7 @@ def simplify_and_adaptive_resample(points, simplify_epsilon=1.0, angle_thresh=10
 
 # --- Class xử lý ảnh và sinh G-code ---
 class Picture:
-    def __init__(self, filepath, x_max=150, y_max=150):
+    def __init__(self, filepath, x_max=100, y_max=100):
         self.img = Image.open(filepath).convert("RGB")
         self.img = np.array(self.img)
         self.h, self.w, self.c = self.img.shape
@@ -265,16 +265,14 @@ class Picture:
                     continue
                 total_points += len(simplified)
 
-                # Di chuyển nhanh đến điểm đầu (G0 + M5 + G92)
+                # Di chuyển nhanh đến điểm đầu (G0 + M5)
                 x0, y0 = simplified[0][0]
                 y0_flipped = self.h - y0
                 if spindle_on:
                     self.gcode.append("M5")  # Tắt spindle trước di chuyển nhanh
                     spindle_on = False
                 self.gcode.append(f"G0 X{x0 * ratio:.2f} Y{y0_flipped * ratio:.2f}")
-                self.gcode.append(f"G92 X{x0 * ratio:.2f} Y{y0_flipped * ratio:.2f}")
-
-                # Vẽ (G1 + M3 + G92)
+                 # Vẽ (G1 + M3)
                 for pt in simplified[1:]:
                     x, y = pt[0]
                     y_flipped = self.h - y
@@ -282,8 +280,6 @@ class Picture:
                         self.gcode.append("M3")  # Bật spindle trước khi vẽ
                         spindle_on = True
                     self.gcode.append(f"G1 X{x * ratio:.2f} Y{y_flipped * ratio:.2f}")
-                    self.gcode.append(f"G92 X{x * ratio:.2f} Y{y_flipped * ratio:.2f}")
-
         # Kết thúc nếu spindle đang bật thì tắt đi
         if spindle_on:
             self.gcode.append("M5")

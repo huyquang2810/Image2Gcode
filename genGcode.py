@@ -75,25 +75,6 @@ class Picture:
     #     gray = cv2.cvtColor(self.img, cv2.COLOR_RGB2GRAY)
     #     self.gray = gray / 255.0
     #
-    #     # Làm mượt vừa đủ
-    #     blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-    #
-    #     # Mở để bỏ nhiễu, Closing để nối lại các nét quan trọng
-    #     kernel = np.ones((2, 2), np.uint8)
-    #     opened = cv2.morphologyEx(blurred, cv2.MORPH_OPEN, kernel)
-    #     closed = cv2.morphologyEx(opened, cv2.MORPH_CLOSE, kernel)
-    #
-    #     # Canny với ngưỡng cao hơn → bớt nét mảnh vụn
-    #     edges = cv2.Canny((closed * 255).astype(np.uint8), threshold1=50, threshold2=140)
-    #
-    #     binary = (edges / 255.0).astype(float)
-    #     self.pre = np.stack([binary] * 3, axis=-1)
-    #     return self.pre
-
-    # def gray_scale(self):
-    #     gray = cv2.cvtColor(self.img, cv2.COLOR_RGB2GRAY)
-    #     self.gray = gray / 255.0
-    #
     #     # Làm sạch noise trước khi edge detect
     #     blurred = cv2.GaussianBlur(gray, (3, 3), 0)  # Blur mạnh hơn (5x5)
     #
@@ -149,9 +130,7 @@ class Picture:
     #         if spindle_on:
     #             self.gcode.append("M5")  # Tắt spindle trước khi di chuyển
     #             spindle_on = False
-    #         self.gcode.append(f"G0 X{x0 * ratio:.4f} Y{y0_flipped * ratio:.4f}")  # Di chuyển nhanh
-    #         self.gcode.append(f"G92 X{x0 * ratio:.4f} Y{y0_flipped * ratio:.4f}")  # Thiết lập vị trí
-    #
+    #         self.gcode.append(f"G0 X{x0 * ratio:.2f} Y{y0_flipped * ratio:.2f}")  # Di chuyển nhanh
     #         # Bắt đầu vẽ (G1 + M3 + G92)
     #         for pt in contour[1:]:
     #             x, y = pt[0]
@@ -160,7 +139,6 @@ class Picture:
     #                 self.gcode.append("M3")  # Bật spindle trước khi vẽ
     #                 spindle_on = True
     #             self.gcode.append(f"G1 X{x * ratio:.2f} Y{y_flipped * ratio:.2f}")  # Vẽ
-    #             self.gcode.append(f"G92 X{x * ratio:.2f} Y{y_flipped * ratio:.2f}")  # Cập nhật vị trí
     #
     #     # Kết thúc nếu spindle đang bật thì tắt đi (M5)
     #     if spindle_on:
@@ -169,59 +147,7 @@ class Picture:
     #
     #     return self.gcode, total_points
 
-    # eps=1, simplify_epsilon=1, 10,1,4,10/8,1.2,6,12,/ 10,0.1,1,10
-    # def gen_gcode(self, eps= 8, simplify_epsilon=1.2, min_spacing=6, min_contour_len=12):
-    #     binary = (self.pre[:, :, 0] > 0.5).astype(np.uint8) * 255
-    #     contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-    #     ratio = self.x_max / max(self.w, self.h)
-    #     total_points = 0
-    #
-    #     # Tính center mỗi contour
-    #     centers = []
-    #     valid_contours = []
-    #     for contour in contours:
-    #         if len(contour) < min_contour_len:
-    #             continue
-    #         M = cv2.moments(contour)
-    #         if M["m00"] != 0:
-    #             cx = int(M["m10"] / M["m00"])
-    #             cy = int(M["m01"] / M["m00"])
-    #         else:
-    #             cx, cy = contour[0][0]
-    #         centers.append([cx, cy])
-    #         valid_contours.append(contour)
-    #
-    #     # Gom cụm bằng DBSCAN
-    #     if not centers:
-    #         return self.gcode, total_points
-    #     labels = DBSCAN(eps=eps, min_samples=1).fit_predict(centers)
-    #
-    #     clusters = {}
-    #     for label, contour in zip(labels, valid_contours):
-    #         clusters.setdefault(label, []).append(contour)
-    #
-    #     for cluster in clusters.values():
-    #         for contour in cluster:  # ❗ Xử lý từng contour riêng, không nối lại
-    #             simplified = simplify_and_adaptive_resample(
-    #                 contour,
-    #                 simplify_epsilon=simplify_epsilon,
-    #                 angle_thresh=15,
-    #                 min_spacing=min_spacing
-    #             )
-    #             if len(simplified) < 2:
-    #                 continue
-    #             total_points += len(simplified)
-    #             x0, y0 = simplified[0][0]
-    #             y0_flipped = self.h - y0
-    #             self.gcode.append(f"G0 X{x0 * ratio:.2f} Y{y0_flipped * ratio:.2f}")
-    #             for pt in simplified[1:]:
-    #                 x, y = pt[0]
-    #                 y_flipped = self.h - y
-    #                 self.gcode.append(f"G1 X{x * ratio:.2f} Y{y_flipped * ratio:.2f}")
-    #
-    #     return self.gcode, total_points
-
-    # eps=1, simplify_epsilon=1, 10,1,4,10/8,1.2,6,12,/ 10,0.1,1,10
+     # eps=1, simplify_epsilon=1, 10,1,4,10/8,1.2,6,12,/ 10,0.1,1,10
     def gen_gcode(self, eps=10, simplify_epsilon=1, min_spacing=4, min_contour_len=10):
         binary = (self.pre[:, :, 0] > 0.5).astype(np.uint8) * 255
         contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
@@ -272,7 +198,6 @@ class Picture:
                     self.gcode.append("M5")  # Tắt spindle trước di chuyển nhanh
                     spindle_on = False
                 self.gcode.append(f"G0 X{x0 * ratio:.2f} Y{y0_flipped * ratio:.2f}")
-                self.gcode.append(f"G92 X{x0 * ratio:.2f} Y{y0_flipped * ratio:.2f}")
 
                 # Vẽ (G1 + M3 + G92)
                 for pt in simplified[1:]:
@@ -282,7 +207,6 @@ class Picture:
                         self.gcode.append("M3")  # Bật spindle trước khi vẽ
                         spindle_on = True
                     self.gcode.append(f"G1 X{x * ratio:.2f} Y{y_flipped * ratio:.2f}")
-                    self.gcode.append(f"G92 X{x * ratio:.2f} Y{y_flipped * ratio:.2f}")
 
         # Kết thúc nếu spindle đang bật thì tắt đi
         if spindle_on:
@@ -547,6 +471,7 @@ if __name__ == '__main__':
 
         # Resize A4
         a4 = resize_to_a4(crop_rgb)
+        # a4 = crop_rgb  # Không resize
         a4_name = os.path.splitext(file)[0] + "_a4.jpg"
         a4_path = os.path.join(img_output, a4_name)
         cv2.imwrite(a4_path, a4)
@@ -589,7 +514,7 @@ if __name__ == '__main__':
 #     mode = input("Nhập chế độ: ")
 #
 #     if mode == '1':
-#         input_dir = "Input_Folder"
+#         input_dir = "test"
 #         filenames = sorted(
 #             [f for f in os.listdir(input_dir) if f.lower().endswith(('.jpg', '.jpeg', '.png'))],
 #             key=lambda x: int(re.search(r'\d+', x).group()) if re.search(r'\d+', x) else float('inf')

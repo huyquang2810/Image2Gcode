@@ -216,7 +216,9 @@ class Picture:
                 if spindle_on:
                     self.gcode.append("M5")  # Tắt spindle trước di chuyển nhanh
                     spindle_on = False
-                self.gcode.append(f"G0 X{x0 * ratio:.2f} Y{y0_flipped * ratio:.2f}")
+                x0_out, y0_out = x0 * ratio, y0_flipped * ratio
+                self.gcode.append(f"G0 X{x0_out:.2f} Y{y0_out:.2f}")
+                self.gcode.append(f"G92 X{x0_out:.2f} Y{y0_out:.2f}")
                  # Vẽ (G1 + M3)
                 for pt in simplified[1:]:
                     x, y = pt[0]
@@ -224,7 +226,10 @@ class Picture:
                     if not spindle_on:
                         self.gcode.append("M3")  # Bật spindle trước khi vẽ
                         spindle_on = True
-                    self.gcode.append(f"G1 X{x * ratio:.2f} Y{y_flipped * ratio:.2f}")
+                    x_out, y_out = x * ratio, y_flipped * ratio
+                    self.gcode.append(f"G1 X{x_out:.2f} Y{y_out:.2f}")
+                    self.gcode.append(f"G92 X{x_out:.2f} Y{y_out:.2f}")
+
         # Kết thúc nếu spindle đang bật thì tắt đi
         if spindle_on:
             self.gcode.append("M5")

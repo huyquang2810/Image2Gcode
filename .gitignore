@@ -1,5 +1,21 @@
-.DS_Store
-.vscode
+# IDE config folders
+.idea/
+.vscode/
+
+# Python virtual environment
 .venv/
-#excel/
-#img/
+venv/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Compiled files
+*.so
+*.dll
+*.exe
+
+# Logs and temp files
+*.log
+*.tmp

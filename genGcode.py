@@ -150,8 +150,6 @@ class Picture:
     #             self.gcode.append("M5")  # Tắt spindle trước khi di chuyển
     #             spindle_on = False
     #         self.gcode.append(f"G0 X{x0 * ratio:.4f} Y{y0_flipped * ratio:.4f}")  # Di chuyển nhanh
-    #         self.gcode.append(f"G92 X{x0 * ratio:.4f} Y{y0_flipped * ratio:.4f}")  # Thiết lập vị trí
-    #
     #         # Bắt đầu vẽ (G1 + M3 + G92)
     #         for pt in contour[1:]:
     #             x, y = pt[0]
@@ -160,64 +158,11 @@ class Picture:
     #                 self.gcode.append("M3")  # Bật spindle trước khi vẽ
     #                 spindle_on = True
     #             self.gcode.append(f"G1 X{x * ratio:.2f} Y{y_flipped * ratio:.2f}")  # Vẽ
-    #             self.gcode.append(f"G92 X{x * ratio:.2f} Y{y_flipped * ratio:.2f}")  # Cập nhật vị trí
     #
     #     # Kết thúc nếu spindle đang bật thì tắt đi (M5)
     #     if spindle_on:
     #         self.gcode.append("M5")
     #         spindle_on = False
-    #
-    #     return self.gcode, total_points
-
-    # eps=1, simplify_epsilon=1, 10,1,4,10/8,1.2,6,12,/ 10,0.1,1,10
-    # def gen_gcode(self, eps= 8, simplify_epsilon=1.2, min_spacing=6, min_contour_len=12):
-    #     binary = (self.pre[:, :, 0] > 0.5).astype(np.uint8) * 255
-    #     contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-    #     ratio = self.x_max / max(self.w, self.h)
-    #     total_points = 0
-    #
-    #     # Tính center mỗi contour
-    #     centers = []
-    #     valid_contours = []
-    #     for contour in contours:
-    #         if len(contour) < min_contour_len:
-    #             continue
-    #         M = cv2.moments(contour)
-    #         if M["m00"] != 0:
-    #             cx = int(M["m10"] / M["m00"])
-    #             cy = int(M["m01"] / M["m00"])
-    #         else:
-    #             cx, cy = contour[0][0]
-    #         centers.append([cx, cy])
-    #         valid_contours.append(contour)
-    #
-    #     # Gom cụm bằng DBSCAN
-    #     if not centers:
-    #         return self.gcode, total_points
-    #     labels = DBSCAN(eps=eps, min_samples=1).fit_predict(centers)
-    #
-    #     clusters = {}
-    #     for label, contour in zip(labels, valid_contours):
-    #         clusters.setdefault(label, []).append(contour)
-    #
-    #     for cluster in clusters.values():
-    #         for contour in cluster:  # ❗ Xử lý từng contour riêng, không nối lại
-    #             simplified = simplify_and_adaptive_resample(
-    #                 contour,
-    #                 simplify_epsilon=simplify_epsilon,
-    #                 angle_thresh=15,
-    #                 min_spacing=min_spacing
-    #             )
-    #             if len(simplified) < 2:
-    #                 continue
-    #             total_points += len(simplified)
-    #             x0, y0 = simplified[0][0]
-    #             y0_flipped = self.h - y0
-    #             self.gcode.append(f"G0 X{x0 * ratio:.2f} Y{y0_flipped * ratio:.2f}")
-    #             for pt in simplified[1:]:
-    #                 x, y = pt[0]
-    #                 y_flipped = self.h - y
-    #                 self.gcode.append(f"G1 X{x * ratio:.2f} Y{y_flipped * ratio:.2f}")
     #
     #     return self.gcode, total_points
 
@@ -286,68 +231,6 @@ class Picture:
             spindle_on = False
 
         return self.gcode, total_points
-
-    #TSP
-    # def gen_gcode(self, eps=8, simplify_epsilon=1.2, min_spacing=6, min_contour_len=12):
-    #     binary = (self.pre[:, :, 0] > 0.5).astype(np.uint8) * 255
-    #     contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-    #     ratio = self.x_max / max(self.w, self.h)
-    #     total_points = 0
-    #
-    #     # Lọc và lấy center của các contour đủ lớn
-    #     centers = []
-    #     filtered = []
-    #     for contour in contours:
-    #         if len(contour) < min_contour_len:
-    #             continue
-    #         M = cv2.moments(contour)
-    #         if M["m00"] != 0:
-    #             cx = int(M["m10"] / M["m00"])
-    #             cy = int(M["m01"] / M["m00"])
-    #         else:
-    #             cx, cy = contour[0][0]
-    #         centers.append([cx, cy])
-    #         filtered.append(contour)
-    #
-    #     if not centers:
-    #         return self.gcode, total_points
-    #
-    #     # TSP: sắp xếp thứ tự contour theo đường đi ngắn nhất (Nearest Neighbor)
-    #     visited = set()
-    #     order = []
-    #     current = 0
-    #     visited.add(current)
-    #     order.append(current)
-    #     while len(order) < len(centers):
-    #         dists = cdist([centers[current]], centers)[0]
-    #         dists[list(visited)] = np.inf
-    #         next_idx = np.argmin(dists)
-    #         visited.add(next_idx)
-    #         order.append(next_idx)
-    #         current = next_idx
-    #
-    #     sorted_contours = [filtered[i] for i in order]
-    #
-    #     # Sinh G-code từ contour đã sắp xếp
-    #     for contour in sorted_contours:
-    #         simplified = simplify_and_adaptive_resample(
-    #             contour,
-    #             simplify_epsilon=simplify_epsilon,
-    #             angle_thresh=15,
-    #             min_spacing=min_spacing
-    #         )
-    #         if len(simplified) < 2:
-    #             continue
-    #         total_points += len(simplified)
-    #         x0, y0 = simplified[0][0]
-    #         y0_flipped = self.h - y0
-    #         self.gcode.append(f"G0 X{x0 * ratio:.2f} Y{y0_flipped * ratio:.2f}")
-    #         for pt in simplified[1:]:
-    #             x, y = pt[0]
-    #             y_flipped = self.h - y
-    #             self.gcode.append(f"G1 X{x * ratio:.2f} Y{y_flipped * ratio:.2f}")
-    #
-    #     return self.gcode, total_points
 
     def save_gcode(self, output_name):
         os.makedirs(os.path.dirname(output_name), exist_ok=True)

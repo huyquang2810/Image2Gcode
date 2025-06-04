@@ -46,6 +46,8 @@ def simplify_and_adaptive_resample(points, simplify_epsilon=1.0, angle_thresh=10
     keep_points.append(approx[-1])
     return np.array(keep_points, dtype=np.int32).reshape(-1, 1, 2)
 
+
+
 # --- Class xử lý ảnh và sinh G-code ---
 class Picture:
     def __init__(self, filepath, x_max=100, y_max=100):
@@ -167,15 +169,54 @@ class Picture:
     #     return self.gcode, total_points
 
     # eps=1, simplify_epsilon=1, 10,1,4,10/8,1.2,6,12,/ 10,0.1,1,10
+# Sửa kha khá trong này để plot 2 cái hình gốc và RKGA
     def gen_gcode(self, eps=10, simplify_epsilon=1, min_spacing=4, min_contour_len=10):
         binary = (self.pre[:, :, 0] > 0.5).astype(np.uint8) * 255
         contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+        print(f"📌 Tổng số contour tìm được: {len(contours)}")
+        save_contours_to_txt(contours, output_txt_path="debug_contours.txt")
+        txt_path = "debug_contours.txt"
+        contours = extract_contours_from_txt(txt_path)
+        centers = compute_contour_centers(contours)
+        rkga_order = rkga_optimize(centers)
+        # Sắp xếp lại danh sách contour theo thứ tự tối ưu (sau RKGA)
+        sorted_contours = [contours[idx] for idx in rkga_order]
+
+        # Đảm bảo định dạng giống với `cv2.findContours()`
+        sorted_contours = [np.array(contour, dtype=np.int32).reshape(-1, 1, 2) for contour in sorted_contours]
+        save_sorted_contours_to_txt(sorted_contours, output_txt_path="debug_sorted_contours.txt")
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 7))
+        # Draw reordered contour
+        for i, contour in enumerate(contours):
+            xs, ys = zip(*contour)
+            ax1.plot(xs, ys)
+            cx, cy = np.mean(xs), np.mean(ys)
+            ax1.text(cx, cy, str(i), fontsize=7, color='red')
+        ax1.set_title("📌 Gốc (chưa RKGA)")
+        ax1.axis('equal')
+        ax1.invert_yaxis()
+
+        # RKGA reordered
+        for order, idx in enumerate(rkga_order):
+            contour = contours[idx]
+            xs, ys = zip(*contour)
+            ax2.plot(xs, ys)
+            cx, cy = np.mean(xs), np.mean(ys)
+            ax2.text(cx, cy, str(order), fontsize=7, color='blue')
+        ax2.set_title("🔀 Sau RKGA (thứ tự tối ưu)")
+        ax2.axis('equal')
+        ax2.invert_yaxis()
+
+        plt.tight_layout()
+        plt.show()
+# mới theem tới đây để check RKGA, chưa thay đổi gì đoạn dưới trong class
         ratio = self.x_max / max(self.w, self.h)
         total_points = 0
 
         centers = []
         valid_contours = []
-        for contour in contours:
+        for contour in sorted_contours:
+
             if len(contour) < min_contour_len:
                 continue
             M = cv2.moments(contour)
@@ -239,12 +280,105 @@ class Picture:
 
     def save_gcode(self, output_name):
         os.makedirs(os.path.dirname(output_name), exist_ok=True)
-        with open(f'{output_name}_gcode.nc', 'w') as f:
+        with open(f'{output_name}_optimize_gcode.nc', 'w') as f:
             for line in self.gcode:
                 f.write(f'{line}\n')
-        print(f'✅ Saved {output_name}_gcode.nc')
+        print(f'✅ Saved {output_name}_optimize_gcode.nc')
 
 # --- Tiện ích resize ảnh trước khi gắn vào Excel ---
+# xuất txt contour
+def save_contours_to_txt(contours, output_txt_path):
+    dir_path = os.path.dirname(output_txt_path)
+    if dir_path:
+        os.makedirs(dir_path, exist_ok=True)
+
+    with open(output_txt_path, 'w', encoding='utf-8') as f:
+        f.write(f"Tổng số contour: {len(contours)}\n\n")
+        for i, contour in enumerate(contours):
+            f.write(f"🧩 Contour #{i} - {len(contour)} điểm:\n")
+            for pt in contour:
+                x, y = pt[0]
+                f.write(f"({x}, {y})\n")
+            f.write("\n")
+
+def save_sorted_contours_to_txt(sorted_contours, output_txt_path):
+    dir_path = os.path.dirname(output_txt_path)
+    if dir_path:
+        os.makedirs(dir_path, exist_ok=True)
+    with open(output_txt_path, 'w', encoding='utf-8') as f:
+        for contour in sorted_contours:
+            for point in contour:
+                # Lưu mỗi điểm với định dạng "x, y"
+                f.write(f"{point[0][0]}, {point[0][1]}\n")
+            # Thêm một dòng trống để phân biệt các contour
+            f.write("\n")
+    print(f"📌 Đã lưu sorted contours vào {output_txt_path}")
+
+
+# add thêm RKGA
+def extract_contours_from_txt(file_path):
+    contours = []
+    with open(file_path, 'r', encoding='utf-8') as f:
+        lines = f.readlines()
+
+    current_contour = []
+    for line in lines:
+        line = line.strip()
+        if line.startswith("🧩 Contour"):
+            if current_contour:
+                contours.append(current_contour)
+                current_contour = []
+        elif line.startswith("(") and "," in line:
+            try:
+                x_str, y_str = line.strip("()").split(",")
+                x, y = int(x_str.strip()), int(y_str.strip())
+                current_contour.append((x, y))
+            except:
+                continue
+    if current_contour:
+        contours.append(current_contour)
+    return contours
+
+# Compute center of each contour
+def compute_contour_centers(contours):
+    centers = []
+    for contour in contours:
+        pts = np.array(contour)
+        M = cv2.moments(pts)
+        if M["m00"] != 0:
+            cx = int(M["m10"] / M["m00"])
+            cy = int(M["m01"] / M["m00"])
+        else:
+            cx, cy = pts[0]
+        centers.append((cx, cy))
+    return np.array(centers)
+
+# RKGA
+def rkga_optimize(centers, generations=100, population_size=50, elite_ratio=0.2):
+    n = len(centers)
+    elite_size = int(population_size * elite_ratio)
+    population = [np.random.rand(n) for _ in range(population_size)]
+
+    def fitness(order):
+        ordered = centers[order]
+        return np.sum(np.linalg.norm(ordered[1:] - ordered[:-1], axis=1))
+
+    for _ in range(generations):
+        sorted_pop = sorted(population, key=lambda chrom: fitness(np.argsort(chrom)))
+        elites = sorted_pop[:elite_size]
+        new_population = elites.copy()
+        while len(new_population) < population_size:
+            elite = elites[np.random.randint(elite_size)]
+            rand = np.random.rand(n)
+            beta = 0.7
+            child = beta * elite + (1 - beta) * rand
+            new_population.append(child)
+        population = new_population
+
+    best = min(population, key=lambda chrom: fitness(np.argsort(chrom)))
+    return np.argsort(best)
+
+## mới add thêm đống bên trên để xuất txt contour để kiểm soát
 def resize_and_save_temp(image_path, output_path, max_size=(100, 100)):
     try:
         img = PILImage.open(image_path).convert("RGB")  # ← Thêm convert tại đây
@@ -299,7 +433,7 @@ if __name__ == '__main__':
     mode = input("Nhập chế độ: ")
 
     if mode == '1':
-        input_face_dir = "Input_Folder"
+        input_face_dir = "test_rkga"
         filenames = sorted(
             [f for f in os.listdir(input_face_dir) if f.lower().endswith(('.jpg', '.jpeg', '.png'))],
             key=lambda x: int(re.search(r'\d+', x).group()) if re.search(r'\d+', x) else float('inf')

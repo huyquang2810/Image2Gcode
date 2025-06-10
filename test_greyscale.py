@@ -3,14 +3,14 @@ import numpy as np
 from matplotlib import pyplot as plt
 
 # Load image in color
-image_path = "input_gcode/rect.jpg"
+image_path = "/input_scalePLOT/test_vip.jpg"
 img = cv2.imread(image_path)
 # Define black color range (BGR)
 lower_black = np.array([0, 0, 0])
 upper_black = np.array([50, 50, 50])  # Cho phép một chút gần đen
 
 # Create mask: giữ pixel nằm trong vùng "đen"
-mask_black = cv2.inRange(img, lower_black, upper_black)
+mask_black = cv2.inRange(img, lower_black, upper_black) # pixel trong khoảng thành màu trắng, ngoài đen
 
 # Invert to get binary: black stays black (0), others become white (255)
 binary = cv2.bitwise_not(mask_black)

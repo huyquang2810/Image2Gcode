@@ -218,7 +218,7 @@ class Picture:
                     spindle_on = False
                 x0_out, y0_out = x0 * ratio, y0_flipped * ratio
                 self.gcode.append(f"G0 X{x0_out:.2f} Y{y0_out:.2f}")
-                self.gcode.append(f"G92 X{x0_out:.2f} Y{y0_out:.2f}")
+                #self.gcode.append(f"G92 X{x0_out:.2f} Y{y0_out:.2f}")
                  # Vẽ (G1 + M3)
                 for pt in simplified[1:]:
                     x, y = pt[0]
@@ -228,7 +228,7 @@ class Picture:
                         spindle_on = True
                     x_out, y_out = x * ratio, y_flipped * ratio
                     self.gcode.append(f"G1 X{x_out:.2f} Y{y_out:.2f}")
-                    self.gcode.append(f"G92 X{x_out:.2f} Y{y_out:.2f}")
+                    #self.gcode.append(f"G92 X{x_out:.2f} Y{y_out:.2f}")
 
         # Kết thúc nếu spindle đang bật thì tắt đi
         if spindle_on:
@@ -279,7 +279,7 @@ def align_face(image, face):
                              flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_CONSTANT, borderValue=(255, 255, 255))
     return np.clip(aligned, 0, 255).astype(np.uint8)
 
-def resize_to_a4(image, target_width=300, target_height=300):
+def resize_to_a4(image, target_width=320, target_height=240):
     h, w = image.shape[:2]
     scale = min(target_width / w, target_height / h)
     new_w, new_h = int(w * scale), int(h * scale)
@@ -599,5 +599,3 @@ if __name__ == '__main__':
 #
 #     wb.save(os.path.join(excel_folder, 'time_processing.xlsx'))
 #     print("\n🎉 Xử lý hoàn tất toàn bộ ảnh!")
-
-
